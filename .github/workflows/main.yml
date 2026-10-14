@@ -1,17 +1,55 @@
-name: Build UIF Win32
+name: Build UIF (32-bit)
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
-  build:
+  build-x86:
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - winmm
+          - d3d9
+          - d3d11
+          - dxgi
+          - opengl32
+          - version
+          - iphlpapi
+          - d3d8
+          - d3dcompiler_43
+          - d3dcompiler_47
+          - d3dx9_43
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: microsoft/setup-msbuild@v2
-      - run: msbuild src/UniversalInjectorFramework/UniversalInjectorFramework.vcxproj /p:Configuration=winmm /p:Platform=Win32 /m
-      - uses: actions/upload-artifact@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build ${{ matrix.config }} (x86)
+        run: |
+          msbuild src/UniversalInjectorFramework.sln `
+            /p:Configuration=${{ matrix.config }} `
+            /p:Platform=x86 `
+            /p:PlatformToolset=v143 `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            /m
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: UIF-winmm-Win32
-          path: src/Build/UniversalInjectorFramework/Win32/winmm/*.dll
+          name: UIF-${{ matrix.config }}-x86
+          path: |
+            src/Build/UniversalInjectorFramework/Win32/${{ matrix.config }}/*.dll
+            src/Build/UniversalInjectorFramework/Win32/${{ matrix.config }}/*.pdb
+          if-no-files-found: warn
