@@ -1,31 +1,25 @@
-name: Build UIF (32-bit)
+name: Build & Release UIF (32-bit)
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. v1.0.0)
+        required: true
+        default: v1.0.0
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CONFIGS: winmm d3d9 d3d11 dxgi opengl32 version iphlpapi d3d8 d3dcompiler_43 d3dcompiler_47 d3dx9_43
 
 jobs:
-  build-x86:
+  build-release:
     runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-          - winmm
-          - d3d9
-          - d3d11
-          - dxgi
-          - opengl32
-          - version
-          - iphlpapi
-          - d3d8
-          - d3dcompiler_43
-          - d3dcompiler_47
-          - d3dx9_43
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,14 +29,34 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build ${{ matrix.config }} (x86)
-        run: msbuild src/UniversalInjectorFramework.sln /p:Configuration=${{ matrix.config }} /p:Platform=x86 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /m
+      # sln maps every proxy config to Debug for referenced projects (Detours);
+      # this forces them to Release so the output is a release build
+      - name: Map dependencies to Release
+        run: (Get-Content src\UniversalInjectorFramework.sln -Raw) -replace '= Debug\|', '= Release|' | Set-Content src\UniversalInjectorFramework.sln -NoNewline
 
-      - name: Upload artifacts
+      - name: Build all configs (x86)
+        run: |
+          foreach ($c in "${{ env.CONFIGS }}".Split(" ")) {
+            msbuild src\UniversalInjectorFramework.sln /p:Configuration=$c /p:Platform=x86 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /m
+            if ($LASTEXITCODE -ne 0) { throw "Build failed: $c" }
+          }
+
+      - name: Collect DLLs
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src\Build\UniversalInjectorFramework\Win32\*\*.dll -Destination dist -Force
+          Get-ChildItem dist
+
+      - name: Upload combined artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UIF-${{ matrix.config }}-x86
-          path: |
-            src/Build/UniversalInjectorFramework/Win32/${{ matrix.config }}/*.dll
-            src/Build/UniversalInjectorFramework/Win32/${{ matrix.config }}/*.pdb
-          if-no-files-found: warn
+          name: UIF-x86-release
+          path: dist/*.dll
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: UIF 32-bit ${{ github.ref_name }}
+          files: dist/*.dll
